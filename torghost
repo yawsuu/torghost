@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 
 import os
 import sys
@@ -75,10 +75,11 @@ signal.signal(signal.SIGINT, sigint_handler)
 TorrcCfgString = """
 
 ##/////ADDED BY TORGHOST ///
-VirtualAddrNetwork 10.0.0.0/10
+VirtualAddrNetworkIPv4 10.192.0.0/10
 AutomapHostsOnResolve 1
-TransPort 9040
-DNSPort 53
+TransPort 9040 IsolateClientAddr IsolateClientProtocol IsolateDestAddr IsolateDestPort
+SocksPort 9050
+DNSPort 5353
 ControlPort 9051
 
 
@@ -109,20 +110,25 @@ def start_torghost():
 			print bcolors.GREEN+"[done]"+bcolors.ENDC
 
 	print t()+" Starting tor service.. ",
-	os.system("service tor start")
+	os.system("systemctl start tor")
 	print bcolors.GREEN+"[done]"+bcolors.ENDC
 	print t()+" setting up iptables rules",
 
 	iptables_rules = """
-	NON_TOR="192.168.1.0/24 192.168.0.0/24"
+	NON_TOR="127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
 	TOR_UID=%s
 	TRANS_PORT="9040"
+	virtual_addr_net="10.192.0.0/10"
 
 	iptables -F
 	iptables -t nat -F
 
 	iptables -t nat -A OUTPUT -m owner --uid-owner $TOR_UID -j RETURN
-	iptables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-ports 53
+	iptables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-ports 5353
+	iptables -t nat -A OUTPUT -p tcp --dport 53 -j REDIRECT --to-ports 5353
+	iptables -t nat -A OUTPUT -p udp -m owner --uid-owner $TOR_UID -m udp --dport 53 -j REDIRECT --to-ports 5353
+	iptables -t nat -A OUTPUT -p tcp -d $virtual_addr_net -j REDIRECT --to-ports $TRANS_PORT
+	iptables -t nat -A OUTPUT -p udp -d $virtual_addr_net -j REDIRECT --to-ports $TRANS_PORT
 	for NET in $NON_TOR 127.0.0.0/9 127.128.0.0/10; do
 	 iptables -t nat -A OUTPUT -d $NET -j RETURN
 	done
@@ -134,7 +140,7 @@ def start_torghost():
 	done
 	iptables -A OUTPUT -m owner --uid-owner $TOR_UID -j ACCEPT
 	iptables -A OUTPUT -j REJECT
-	"""%(getoutput("id -ur debian-tor"))
+	"""%(getoutput("id -ur tor"))
 
 	os.system(iptables_rules)
 	print bcolors.GREEN+"[done]"+bcolors.ENDC
@@ -152,12 +158,13 @@ def stop_torghost():
 	iptables -t mangle -F
 	iptables -F
 	iptables -X
+	systemctl stop tor
 	"""
 	os.system(IpFlush)
 
 	print bcolors.GREEN+"[done]"+bcolors.ENDC
 	print t()+" Restarting Network manager",
-	os.system("service network-manager restart")
+	os.system("systemctl restart NetworkManager")
 	print bcolors.GREEN+"[done]"+bcolors.ENDC
 	print t()+" Fetching current IP..."
 	print t()+" CURRENT IP : "+bcolors.GREEN+ip()+bcolors.ENDC
